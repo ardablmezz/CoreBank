@@ -3,6 +3,11 @@ using Microsoft.EntityFrameworkCore;
 using CoreBank.API.Data;
 using CoreBank.API.Models;
 using CoreBank.API.DTOs;
+using BCrypt.Net;
+using System.IdentityModel.Tokens.Jwt;
+using System.Security.Claims;
+using System.Text;
+using Microsoft.IdentityModel.Tokens;
 
 namespace CoreBank.API.Controllers
 {
@@ -11,9 +16,11 @@ namespace CoreBank.API.Controllers
     public class AuthController : ControllerBase
     {
         private readonly AppDbContext _context;
-        public AuthController(AppDbContext context)
+        private readonly IConfiguration _configuration;
+        public AuthController(AppDbContext context, IConfiguration configuration)
         {
             _context = context;
+            _configuration = configuration;
         }
         [HttpPost("register")]
         public async Task<IActionResult> Register([FromBody] RegisterDto dto)
@@ -29,7 +36,7 @@ namespace CoreBank.API.Controllers
                 KullaniciAdSoyad = dto.AdSoyad,
                 KullaniciTc = dto.Tc,
                 KullaniciEposta = dto.Eposta,
-                KullaniciSifre = dto.Sifre,
+                KullaniciSifre = BCrypt.Net.BCrypt.HashPassword(dto.Sifre),
                 OlusturmaTarihi = DateTime.UtcNow
             };
 
@@ -65,16 +72,19 @@ namespace CoreBank.API.Controllers
         {
             var user = await _context.Users
                 .Include(u => u.Accounts)
-                .FirstOrDefaultAsync(u => u.KullaniciEposta == dto.Eposta && u.KullaniciSifre == dto.Sifre);
+                .FirstOrDefaultAsync(u => u.KullaniciEposta == dto.Eposta);
 
-            if (user == null)
+            if (user == null || !BCrypt.Net.BCrypt.Verify(dto.Sifre, user.KullaniciSifre))
             {
                 return Unauthorized(new { message = "E-posta veya şifre hatalı." });
             }
 
+            var token = GenerateJwtToken(user);
+
             return Ok(new
             {
                 message = "Giriş başarılı.",
+                token = token,
                 userId = user.KullaniciId,
                 adSoyad = user.KullaniciAdSoyad,
                 eposta = user.KullaniciEposta,
@@ -86,6 +96,30 @@ namespace CoreBank.API.Controllers
                     a.HesapParaBirimi
                 })
             });
+        }
+        private string GenerateJwtToken(User user)
+        {
+            var jwtSettings = _configuration.GetSection("Jwt");
+            var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtSettings["Key"]!));
+            var creds = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);
+
+            var claims = new[]
+            {
+                new Claim(JwtRegisteredClaimNames.Sub, user.KullaniciId.ToString()),
+                new Claim(JwtRegisteredClaimNames.Email, user.KullaniciEposta),
+                new Claim("FullName", user.KullaniciAdSoyad),
+                new Claim(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString())
+            };
+
+            var token = new JwtSecurityToken(
+                issuer: jwtSettings["Issuer"],
+                audience: jwtSettings["Audience"],
+                claims: claims,
+                expires: DateTime.UtcNow.AddHours(2),
+                signingCredentials: creds
+            );
+
+            return new JwtSecurityTokenHandler().WriteToken(token);
         }
     }
 }

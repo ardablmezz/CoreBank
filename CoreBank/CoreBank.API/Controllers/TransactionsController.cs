@@ -1,4 +1,5 @@
-﻿using Microsoft.AspNetCore.Mvc;
+﻿using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using CoreBank.API.Data;
 using CoreBank.API.Models;
@@ -6,6 +7,7 @@ using CoreBank.API.DTOs;
 
 namespace CoreBank.API.Controllers
 {
+    [Authorize]
     [Route("api/[controller]")]
     [ApiController]
     public class TransactionsController: ControllerBase
