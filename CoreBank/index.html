@@ -1,0 +1,257 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CoreBank - Bireysel Bankacılık</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
+  <style>
+    body { background-color: #f4f7f6; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+    .bank-card { background: linear-gradient(135deg, #0d6efd, #0a58ca); color: white; border-radius: 16px; min-height: 160px; }
+  </style>
+</head>
+<body>
+
+  <nav class="navbar navbar-dark bg-dark px-4 py-3 shadow-sm">
+    <div class="container-fluid">
+      <a class="navbar-brand fw-bold" href="#"><i class="bi bi-bank2 me-2"></i>CoreBank</a>
+      <div class="d-flex align-items-center gap-3">
+        <span class="text-light small"><i class="bi bi-person-circle me-1"></i> <span id="userName">--</span></span>
+        <button id="btnLogout" class="btn btn-sm btn-outline-light py-1 px-3"><i class="bi bi-box-arrow-right me-1"></i>Çıkış</button>
+      </div>
+    </div>
+  </nav>
+
+  <div class="container my-5">
+    <div class="row g-4">
+      
+      <div class="col-lg-5">
+
+        <div class="card bank-card p-4 shadow-sm border-0 mb-4" id="mainCard">
+          <div class="d-flex justify-content-between align-items-center mb-3">
+            <span class="text-white-50" id="cardAccountTitle">Vadesiz TL Hesabı</span>
+            <i class="bi bi-credit-card-2-front fs-4"></i>
+          </div>
+          <h2 class="fw-bold mb-2" id="cardBalance">-- ₺</h2>
+          <p class="mb-0 text-white-50 small font-monospace" id="cardIban">--</p>
+        </div>
+
+        <div class="card border-0 shadow-sm p-4 rounded-4">
+          <h5 class="fw-bold mb-3"><i class="bi bi-send me-2 text-primary"></i>Para Transferi</h5>
+          <form id="transferForm">
+            <div class="mb-3">
+              <label class="form-label small fw-semibold">Alıcı IBAN</label>
+              <input type="text" class="form-control text-uppercase" id="targetIban" placeholder="TR0000..." maxlength="26" required>
+            </div>
+            <div class="mb-3">
+              <label class="form-label small fw-semibold">Tutar (₺)</label>
+              <input type="number" step="0.01" min="1.00" class="form-control" id="transferAmount" placeholder="0.00" required>
+            </div>
+            <div class="mb-3">
+              <label class="form-label small fw-semibold">Açıklama</label>
+              <input type="text" class="form-control" id="transferDesc" placeholder="Açıklama giriniz" maxlength="100">
+            </div>
+            <button type="submit" id="btnSubmitTransfer" class="btn btn-primary w-100 py-2 fw-semibold">İşlemi Onayla</button>
+          </form>
+          <div id="transferAlert" class="mt-3 d-none alert py-2 small"></div>
+        </div>
+
+      </div>
+
+      <div class="col-lg-7">
+        <div class="card border-0 shadow-sm p-4 rounded-4 h-100">
+          <div class="d-flex justify-content-between align-items-center mb-3">
+            <h5 class="fw-bold mb-0"><i class="bi bi-clock-history me-2 text-primary"></i>Hesap Hareketleri</h5>
+            <span class="badge bg-secondary-subtle text-secondary px-3 py-2 rounded-pill" id="tableFilterLabel">Tümü</span>
+          </div>
+          
+          <div class="table-responsive">
+            <table class="table align-middle table-hover mb-0">
+              <thead class="table-light">
+                <tr>
+                  <th class="small">Tarih</th>
+                  <th class="small">Açıklama / IBAN</th>
+                  <th class="small text-end">Tutar</th>
+                </tr>
+              </thead>
+              <tbody id="transactionList">
+                <tr>
+                  <td colspan="3" class="text-center text-muted py-4">Yükleniyor...</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+
+  <script>
+    const API_BASE_URL = 'http://localhost:5296/api';
+
+const token = localStorage.getItem('corebank_token');
+const storedUser = localStorage.getItem('corebank_user');
+
+if (!token || !storedUser) {
+  window.location.href = 'auth.html';
+}
+
+const user = JSON.parse(storedUser);
+document.getElementById('userName').textContent = user.adSoyad || 'Kullanıcı';
+document.getElementById('cardIban').textContent = user.iban || 'IBAN Bulunamadı';
+
+document.getElementById('btnLogout').addEventListener('click', () => {
+  localStorage.removeItem('corebank_token');
+  localStorage.removeItem('corebank_user');
+  window.location.href = 'auth.html';
+});
+
+async function loadAccountDetails() {
+  try {
+    const res = await fetch(`${API_BASE_URL}/Accounts/my-accounts`, {
+      method: 'GET',
+      headers: {
+        'Authorization': `Bearer ${token}`
+      }
+    });
+
+    if (!res.ok) {
+      if (res.status === 401) {
+        localStorage.clear();
+        window.location.href = 'auth.html';
+        return;
+      }
+      throw new Error('Hesap bilgileri alınamadı.');
+    }
+
+    const accounts = await res.json();
+    if (accounts && accounts.length > 0) {
+      const primaryAccount = accounts[0];
+      const formattedBalance = Number(primaryAccount.hesapBakiye).toLocaleString('tr-TR', {
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2
+      });
+      document.getElementById('cardBalance').textContent = `${formattedBalance} ₺`;
+    }
+  } catch (err) {
+    document.getElementById('cardBalance').textContent = 'Hata ₺';
+  }
+}
+
+async function loadHistory() {
+  const listElement = document.getElementById('transactionList');
+
+  try {
+    const res = await fetch(`${API_BASE_URL}/Transactions/history/${user.iban}`, {
+      method: 'GET',
+      headers: {
+        'Authorization': `Bearer ${token}`
+      }
+    });
+
+    if (!res.ok) {
+      if (res.status === 401) {
+        localStorage.clear();
+        window.location.href = 'auth.html';
+        return;
+      }
+      throw new Error('İşlem geçmişi alınamadı.');
+    }
+
+    const data = await res.json();
+
+    if (!data || data.length === 0) {
+      listElement.innerHTML = `<tr><td colspan="3" class="text-center text-muted py-4">İşlem geçmişi bulunamadı.</td></tr>`;
+      return;
+    }
+
+    listElement.innerHTML = data.map(item => {
+      const isOutgoing = item.islemTipi === 'GIDEN';
+      const badgeColor = isOutgoing ? 'text-danger' : 'text-success';
+      const sign = isOutgoing ? '-' : '+';
+      const rawDate = item.islemTarihi.endsWith('Z') ? item.islemTarihi : item.islemTarihi + 'Z';
+
+      const dateStr = new Date(rawDate).toLocaleDateString('tr-TR', {
+        day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit'
+      });
+
+      return `
+        <tr>
+          <td class="small text-muted">${dateStr}</td>
+          <td>
+            <div class="fw-semibold small">${item.aciklama || (isOutgoing ? 'Giden Transfer' : 'Gelen Transfer')}</div>
+            <div class="text-muted font-monospace" style="font-size: 0.75rem;">${isOutgoing ? item.aliciIban : item.gonderenIban}</div>
+          </td>
+          <td class="text-end fw-bold ${badgeColor}">
+            ${sign}${Number(item.tutar).toLocaleString('tr-TR', { minimumFractionDigits: 2 })} ₺
+          </td>
+        </tr>
+      `;
+    }).join('');
+
+  } catch (err) {
+    listElement.innerHTML = `<tr><td colspan="3" class="text-center text-danger py-4">${err.message}</td></tr>`;
+  }
+}
+
+document.getElementById('transferForm').addEventListener('submit', async function (e) {
+  e.preventDefault();
+
+  const alertBox = document.getElementById('transferAlert');
+  const btn = document.getElementById('btnSubmitTransfer');
+  alertBox.classList.add('d-none');
+
+  btn.disabled = true;
+  btn.textContent = 'Transfer Ediliyor...';
+
+  const payload = {
+    gonderenIban: user.iban,
+    aliciIban: document.getElementById('targetIban').value.trim(),
+    tutar: parseFloat(document.getElementById('transferAmount').value),
+    aciklama: document.getElementById('transferDesc').value.trim()
+  };
+
+  try {
+    const res = await fetch(`${API_BASE_URL}/Transactions/transfer`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`
+      },
+      body: JSON.stringify(payload)
+    });
+
+    const data = await res.json();
+
+    if (!res.ok) {
+      throw new Error(data.message || 'Transfer başarısız oldu.');
+    }
+
+    alertBox.className = 'mt-3 alert alert-success py-2 small';
+    alertBox.textContent = data.message || 'Transfer işlemi başarıyla gerçekleşti.';
+    alertBox.classList.remove('d-none');
+
+    document.getElementById('transferForm').reset();
+    
+    await Promise.all([loadAccountDetails(), loadHistory()]);
+
+  } catch (err) {
+    alertBox.className = 'mt-3 alert alert-danger py-2 small';
+    alertBox.textContent = err.message;
+    alertBox.classList.remove('d-none');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'İşlemi Onayla';
+  }
+});
+
+loadAccountDetails();
+loadHistory();
+  </script>
+</body>
+</html>
