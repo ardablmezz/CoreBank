@@ -4,6 +4,7 @@ using Microsoft.EntityFrameworkCore;
 using CoreBank.API.Data;
 using CoreBank.API.Models;
 using CoreBank.API.DTOs;
+using System.Security.Claims;
 
 namespace CoreBank.API.Controllers
 {
@@ -29,6 +30,14 @@ namespace CoreBank.API.Controllers
             if (senderAccount == null)
             {
                 return NotFound(new { message = "Gönderen IBAN sistemde bulunamadı." });
+            }
+
+            var userIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value
+                              ?? User.FindFirst("sub")?.Value;
+
+            if (userIdClaim == null || senderAccount.KullaniciId != int.Parse(userIdClaim))
+            {
+                return StatusCode(403, new { message = "Yetkisiz işlem. Yalnızca kendi hesabınızdan para transferi yapabilirsiniz." });
             }
 
             var receiverAccount = await _context.Accounts.FirstOrDefaultAsync(a => a.HesapIban == dto.AliciIban);
@@ -77,6 +86,42 @@ namespace CoreBank.API.Controllers
                 await transaction.RollbackAsync();
                 return StatusCode(500, new { message = "Transfer sırasında bir hata oluştu.", detail = ex.Message });
             }
+        }
+        [HttpGet("history/{iban}")]
+        public async Task<IActionResult> GetTransactionHistory(string iban)
+        {
+            var account = await _context.Accounts.FirstOrDefaultAsync(a => a.HesapIban == iban);
+            if (account == null)
+            {
+                return NotFound(new { message = "Belirtilen IBAN'a ait hesap bulunamadı." });
+            }
+
+            var userIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value
+                              ?? User.FindFirst("sub")?.Value;
+
+            if (userIdClaim == null || account.KullaniciId != int.Parse(userIdClaim))
+            {
+                return StatusCode(403, new { message = "Yetkisiz işlem. Başka bir kullanıcının hesap dökümünü görüntüleyemezsiniz." });
+            }
+
+            var transactions = await _context.Transactions
+                .Include(t => t.GonderenHesap)
+                .Include(t => t.AliciHesap)
+                .Where(t => t.GonderenHesapId == account.HesapId || t.AliciHesapId == account.HesapId)
+                .OrderByDescending(t => t.IslemTarihi)
+                .Select(t => new TransactionHistoryDto
+                {
+                    IslemId = t.IslemId,
+                    GonderenIban = t.GonderenHesap.HesapIban,
+                    AliciIban = t.AliciHesap.HesapIban,
+                    Tutar = t.IslemTutar,
+                    IslemTarihi = t.IslemTarihi ?? DateTime.UtcNow,
+                    IslemTipi = t.GonderenHesapId == account.HesapId ? "GIDEN" : "GELEN",
+                    Aciklama = t.IslemAciklama
+                })
+                .ToListAsync();
+
+            return Ok(transactions);
         }
     }
 }
