@@ -13,6 +13,7 @@ namespace CoreBank.API.Services
     {
         private readonly AppDbContext _context;
         private readonly IConfiguration _configuration;
+        private static readonly Random _random = new();
 
         public AuthService(AppDbContext context, IConfiguration configuration)
         {
@@ -42,11 +43,12 @@ namespace CoreBank.API.Services
             _context.Users.Add(newUser);
             await _context.SaveChangesAsync();
 
-            // Yeni kullanıcıya otomatik IBAN ve bakiye tanımlama
+            string generatedIban = await GenerateUniqueIbanAsync();
+
             var newAccount = new Account
             {
                 KullaniciId = newUser.KullaniciId,
-                HesapIban = "TR" + Guid.NewGuid().ToString("N")[..24].ToUpper(),
+                HesapIban = generatedIban,
                 HesapBakiye = 1000m,
                 HesapParaBirimi = "TRY"
             };
@@ -88,6 +90,21 @@ namespace CoreBank.API.Services
             var tokenString = tokenHandler.WriteToken(token);
 
             return (true, "Giriş başarılı.", tokenString, user.KullaniciAdSoyad, account?.HesapIban);
+        }
+
+        private async Task<string> GenerateUniqueIbanAsync()
+        {
+            string iban;
+            bool exists;
+
+            do
+            {
+                var digits = string.Concat(Enumerable.Range(0, 24).Select(_ => _random.Next(0, 10)));
+                iban = "TR" + digits;
+                exists = await _context.Accounts.AnyAsync(a => a.HesapIban == iban);
+            } while (exists);
+
+            return iban;
         }
     }
 }
